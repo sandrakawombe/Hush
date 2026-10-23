@@ -140,7 +140,10 @@ def parse_set(items):
     out = {}
     for it in items or []:
         k, v = it.split("=", 1)
-        out[k] = int(v) if v.lstrip("-").isdigit() else float(v)
+        try:
+            out[k] = int(v) if v.lstrip("-").isdigit() else float(v)
+        except ValueError:
+            out[k] = v  # e.g. model=hush_tcn_v2.npz
     return out
 
 

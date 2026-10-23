@@ -4,7 +4,7 @@ Automatic cough and sneeze muting for calls and meetings. Hush listens a
 fraction of a second ahead of what it sends, silences just the cough or
 sneeze, and unmutes on its own.
 
-> Status: early development. Pieces 1–3 of 6 are done: test bench, engine core, and the first detector running inside the engine.
+> Status: early development. Pieces 1–3 are done and piece 5 (the trained model) is working in Python; next it moves into the C++ engine.
 
 ## Plan
 
@@ -14,7 +14,7 @@ sneeze, and unmutes on its own.
 | 2 | **Engine core** (C++): look-ahead buffer, detector slot, mute and fade, C API | ✅ done |
 | 3 | **Rules detector in the engine**, scored on the bench | ✅ done |
 | 4 | Chrome extension (Meet, Teams web, Zoom web) | |
-| 5 | Trained on-device model in the detector slot | |
+| 5 | **Trained on-device model**: trained and scored in Python ✅, C++ port next | in progress |
 | 6 | Desktop virtual microphone, then Android demo | |
 
 ## The engine
@@ -91,16 +91,29 @@ further ahead than the real buffer would allow.
 
 See [bench/DATA.md](bench/DATA.md) for data sources and licenses.
 
-## Current scores (dev set, real C++ engine, 100 ms look-ahead)
+## Current scores (100 ms look-ahead)
 
-| Metric | Rules detector |
-|---|---|
-| Coughs/sneezes caught | 12.8% |
-| Leak when caught (median) | 0 ms |
-| False mutes per hour | 70.5 |
-| Look-alikes muted | 3.3% |
-| Speech cut per hour | 24 s |
+The **test** set is locked: speakers and recordings that neither detector was
+tuned or trained on. It was scored once.
 
-The engine does its job: when the detector decides in time, nothing leaks.
-The rules detector is the weak part. It misses most real coughs and fires on
-word onsets. The trained model (piece 5) replaces it in the detector slot.
+| Metric | Rules (C++ engine) | Model v2 (Python) |
+|---|---|---|
+| Coughs/sneezes caught | 22.6% | **47.2%** |
+| ⤷ coughs | 15.2% | **71.7%** |
+| ⤷ sneezes | 28.3% | 28.3% |
+| Leak when caught (median) | 0 ms | 0 ms |
+| False mutes per hour | 78 | **21** |
+| Look-alikes muted | 7.0% | 5.3% |
+| Speech cut per hour | 30.7 s | **7.2 s** |
+
+The model is a 17,000-weight causal network over log-mel features
+(`train/train.py`), trained on 4,000 generated calls built from Coswara,
+ESC-50 and FSDD (`train/gen_data.py`), with its decision thresholds tuned on
+separate validation calls (`train/tune.py`). Sneezes are its weak spot: the
+only sneeze recordings available are 32 ESC-50 clips.
+
+```bash
+bench/scripts/fetch_coswara.sh                 # extra training data (CC BY 4.0)
+python train/gen_data.py && python train/train.py && python train/tune.py
+cd bench && python -m hush_bench.score --detector model --split dev
+```

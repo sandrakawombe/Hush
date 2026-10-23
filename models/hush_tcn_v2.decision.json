@@ -1,0 +1,10 @@
+{
+  "on_th": 0.95,
+  "on_frames": 3,
+  "off_th": 0.3,
+  "off_frames": 6,
+  "lead_s": 0.08,
+  "tail_s": 0.05,
+  "min_hold_s": 0.15,
+  "merge_s": 0.1
+}
