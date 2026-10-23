@@ -1,5 +1,7 @@
 # Hush
 
+[![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+
 Automatic cough and sneeze muting for calls and meetings. Hush listens a
 fraction of a second ahead of what it sends, silences just the cough or
 sneeze, and unmutes on its own.
@@ -122,3 +124,8 @@ python train/gen_data.py && python train/train.py && python train/tune.py
 python train/export_cpp.py models/hush_tcn_v2.npz   # compile the weights into the engine
 cd bench && python -m hush_bench.score --detector model --split dev
 ```
+
+## License
+
+All rights reserved; see [LICENSE](LICENSE). The current trained model is
+non-commercial only because of its training data ([bench/DATA.md](bench/DATA.md)).

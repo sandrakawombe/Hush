@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  engine:
+    name: Engine (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build engine/build --config Release
+      - name: Test
+        run: ctest --test-dir engine/build -C Release --output-on-failure
+
+  engine-sanitizers:
+    name: Engine (address + undefined-behavior checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Debug -DHUSH_SANITIZE=ON
+      - run: cmake --build engine/build
+      - run: ./engine/build/hush_tests
+
+  bench:
+    name: Bench scoring logic (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r bench/requirements.txt
+      - run: cd bench && python -m pytest -q tests
+      - name: Model loads and runs on a synthetic clip
+        run: |
+          cd bench && python - <<'PY'
+          import numpy as np
+          from hush_bench.detectors.model import ModelDetector
+          x = (np.random.default_rng(0).standard_normal(16000 * 3) * 0.01).astype(np.float32)
+          p = ModelDetector().probs(x, 16000)
+          assert p.shape[0] > 0 and 0 <= p.min() and p.max() <= 1
+          print("model OK:", len(p), "frames")
+          PY

@@ -1,0 +1,19 @@
+Copyright (c) 2026 the Hush authors. All rights reserved.
+
+This repository is published for viewing and evaluation only. No license is
+granted to use, copy, modify, distribute, or sell this software, its trained
+models, or any part of it, except with the copyright holder's written
+permission.
+
+Third-party data
+----------------
+The trained model in models/ was built using third-party datasets with their
+own terms, listed in bench/DATA.md:
+
+  * ESC-50 (CC BY-NC 3.0) - non-commercial use only
+  * Coswara, Indian Institute of Science (CC BY 4.0) - attribution required
+  * Free Spoken Digit Dataset (CC BY-SA 4.0)
+
+Because of ESC-50, the current model (models/hush_tcn_v2.npz and the weights
+compiled into engine/src/model_weights.inc) may only be used non-commercially,
+regardless of any permission granted for the code.

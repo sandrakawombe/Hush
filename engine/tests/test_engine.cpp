@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES  // M_PI on MSVC
 // Engine tests. No external test framework: build and run `hush_tests`.
 #include <atomic>
 #include <chrono>
