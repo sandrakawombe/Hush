@@ -4,6 +4,7 @@
 
 #include "hush/engine.hpp"
 #include "hush/hush.h"
+#include "hush/model_detector.hpp"
 #include "hush/rules_detector.hpp"
 
 struct hush_engine {
@@ -23,7 +24,7 @@ hush_config hush_default_config(void) {
   c.lookahead_ms = 100;
   c.fade_ms = 15;
   c.max_mute_ms = 2500;
-  c.detector = HUSH_DETECTOR_NONE;
+  c.detector = HUSH_DETECTOR_MODEL;
   return c;
 }
 
@@ -38,6 +39,9 @@ hush_engine* hush_create(const hush_config* c) {
       break;
     case HUSH_DETECTOR_RULES:
       det = std::make_unique<hush::RulesDetector>();
+      break;
+    case HUSH_DETECTOR_MODEL:
+      det = std::make_unique<hush::ModelDetector>();
       break;
     default:
       return nullptr;

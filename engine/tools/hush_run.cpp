@@ -1,11 +1,11 @@
 // hush_run: run WAV files through Hush from the command line.
 //
-//   hush_run spans [--lookahead-ms 100] [--block 160] [--out DIR] FILE.wav...
-//       Runs the full engine with the rules detector. Prints one JSON line per
+//   hush_run spans [--detector model|rules] [--lookahead-ms 100] [--block 160] [--out DIR] FILE.wav...
+//       Runs the full engine (default detector: model). Prints one JSON line per
 //       file with the spans the engine actually muted (seconds, on the input
 //       timeline) and its stats. --out also writes the processed audio.
 //
-//   hush_run proposals FILE.wav...
+//   hush_run proposals [--detector model|rules] FILE.wav...
 //       Runs only the detector and prints what it proposed and when it
 //       decided. Used by the bench to check the C++ port against Python.
 //
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "hush/engine.hpp"
+#include "hush/model_detector.hpp"
 #include "hush/rules_detector.hpp"
 
 namespace {
@@ -88,36 +89,42 @@ std::string json_str(const std::string& s) {
   return o + "\"";
 }
 
+std::unique_ptr<hush::Detector> make_detector(const std::string& name) {
+  if (name == "rules") return std::make_unique<hush::RulesDetector>();
+  if (name == "model") return std::make_unique<hush::ModelDetector>();
+  throw std::runtime_error("unknown detector: " + name + " (use model or rules)");
+}
+
 // Records detector proposals with the moment each was decided.
 struct Recorder final : hush::MuteSink {
   struct P { uint64_t start, end, decided; int kind; };
   std::vector<P> out;
   uint64_t now = 0;
-  const hush::RulesDetector* det = nullptr;
+  const hush::RulesDetector* det = nullptr;  // only the rules detector guesses cough vs sneeze
   void begin_mute(uint64_t start) override {
     if (!out.empty() && out.back().end != UINT64_MAX && start <= out.back().end) {
       out.back().end = UINT64_MAX;  // merged with the previous one, as the engine would
       return;
     }
-    out.push_back({start, UINT64_MAX, now, det->last_kind()});
+    out.push_back({start, UINT64_MAX, now, det ? det->last_kind() : 1});
   }
   void end_mute(uint64_t end) override {
     if (!out.empty() && out.back().end == UINT64_MAX) out.back().end = end;
   }
 };
 
-int run_proposals(const std::vector<std::string>& files) {
+int run_proposals(const std::vector<std::string>& files, const std::string& detector) {
   for (const auto& path : files) {
     Wav w = read_wav(path);
-    hush::RulesDetector det;
-    det.prepare(w.rate, 1);
+    std::unique_ptr<hush::Detector> det = make_detector(detector);
+    det->prepare(w.rate, 1);
     Recorder rec;
-    rec.det = &det;
+    rec.det = dynamic_cast<const hush::RulesDetector*>(det.get());
     std::vector<float> x = w.x;
     x.resize(x.size() + static_cast<size_t>(w.rate), 0.f);  // 1 s of silence lets the last event finish
     for (size_t i = 0; i < x.size(); ++i) {
       rec.now = i + 1;  // decisions made after hearing sample i
-      det.process(&x[i], 1, i, rec);
+      det->process(&x[i], 1, i, rec);
     }
     const double sr = w.rate;
     std::printf("{\"file\":%s,\"mutes\":[", json_str(path).c_str());
@@ -132,14 +139,15 @@ int run_proposals(const std::vector<std::string>& files) {
   return 0;
 }
 
-int run_spans(const std::vector<std::string>& files, double lookahead_ms, size_t block, const std::string& out_dir) {
+int run_spans(const std::vector<std::string>& files, double lookahead_ms, size_t block, const std::string& out_dir,
+              const std::string& detector) {
   for (const auto& path : files) {
     Wav w = read_wav(path);
     hush::Config cfg;
     cfg.sample_rate = w.rate;
     cfg.max_block = block;
     cfg.lookahead_ms = lookahead_ms;
-    hush::Engine eng(cfg, std::make_unique<hush::RulesDetector>());
+    hush::Engine eng(cfg, make_detector(detector));
     const size_t D = eng.latency_samples();
     std::vector<float> x = w.x;
     x.resize(x.size() + D + static_cast<size_t>(w.rate), 0.f);  // flush the delay line
@@ -180,13 +188,13 @@ int run_spans(const std::vector<std::string>& files, double lookahead_ms, size_t
 
 int main(int argc, char** argv) {
   if (argc < 2 || (std::strcmp(argv[1], "spans") && std::strcmp(argv[1], "proposals"))) {
-    std::fprintf(stderr, "usage: hush_run spans|proposals [--lookahead-ms N] [--block N] [--out DIR] [--list FILE] FILE.wav...\n");
+    std::fprintf(stderr, "usage: hush_run spans|proposals [--detector model|rules] [--lookahead-ms N] [--block N] [--out DIR] [--list FILE] FILE.wav...\n");
     return 2;
   }
   const std::string mode = argv[1];
   double lookahead = 100;
   size_t block = 160;
-  std::string out_dir;
+  std::string out_dir, detector = "model";
   std::vector<std::string> files;
   try {
     for (int i = 2; i < argc; ++i) {
@@ -198,6 +206,7 @@ int main(int argc, char** argv) {
       if (a == "--lookahead-ms") lookahead = std::stod(next());
       else if (a == "--block") block = std::stoul(next());
       else if (a == "--out") out_dir = next();
+      else if (a == "--detector") detector = next();
       else if (a == "--list") {
         std::ifstream l(next());
         for (std::string line; std::getline(l, line);)
@@ -206,7 +215,8 @@ int main(int argc, char** argv) {
     }
     if (files.empty()) throw std::runtime_error("no input files");
     if (block == 0) throw std::runtime_error("--block must be at least 1");
-    return mode == "spans" ? run_spans(files, lookahead, block, out_dir) : run_proposals(files);
+    make_detector(detector);  // validate the name before reading any files
+    return mode == "spans" ? run_spans(files, lookahead, block, out_dir, detector) : run_proposals(files, detector);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "hush_run: %s\n", e.what());
     return 1;

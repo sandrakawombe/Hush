@@ -12,6 +12,7 @@
 
 #include "hush/engine.hpp"
 #include "hush/hush.h"
+#include "hush/model_detector.hpp"
 #include "hush/rules_detector.hpp"
 
 // ---- allocation counter: proves process() never touches the heap ----------
@@ -284,6 +285,8 @@ TEST(c_api_validates_and_runs) {
   CHECK(hush_create(&bad) == nullptr);
   CHECK(hush_create(nullptr) == nullptr);
 
+  CHECK(c.detector == HUSH_DETECTOR_MODEL);  // the model is the default
+  c.detector = HUSH_DETECTOR_NONE;           // plain pass-through for exact checks below
   c.sample_rate = 48000;
   c.max_block = 480;
   hush_engine* h = hush_create(&c);
@@ -409,6 +412,98 @@ TEST(rules_speed) {
 #if !defined(HUSH_SANITIZE) && defined(NDEBUG)
   CHECK(secs < 18);  // under 5% of one core
 #endif
+}
+
+// ---- model detector -------------------------------------------------------
+
+TEST(model_leaves_silence_and_steady_talking_alone) {
+  Engine a(cfg(), std::make_unique<ModelDetector>());
+  std::vector<float> quiet(SR * 5, 0.f);
+  run(a, quiet, 160);
+  CHECK(a.stats().mutes == 0);
+  Engine b(cfg(), std::make_unique<ModelDetector>());
+  run(b, talk_with_burst(SR, 6, -1), 160);
+  CHECK(b.stats().mutes == 0);
+}
+
+TEST(model_probability_appears_after_its_history_fills) {
+  ModelDetector d;
+  d.prepare(SR, 4096);
+  struct Null final : MuteSink {
+    void begin_mute(uint64_t) override {}
+    void end_mute(uint64_t) override {}
+  } sink;
+  CHECK(d.last_probability() < 0);
+  auto x = noise(SR);
+  d.process(x.data(), x.size(), 0, sink);
+  CHECK(d.last_probability() >= 0.f && d.last_probability() <= 1.f);
+}
+
+TEST(model_same_result_for_any_block_size_and_in_place) {
+  auto x = talk_with_burst(SR, 4, 2.0, 21);
+  for (auto& v : x) v *= 1.5f;
+  Engine a(cfg(), std::make_unique<ModelDetector>());
+  auto ya = run(a, x, 1);
+  Engine b(cfg(), std::make_unique<ModelDetector>());
+  auto yb = run(b, x, 777);
+  Engine c(cfg(), std::make_unique<ModelDetector>());
+  auto z = x;
+  for (size_t i = 0; i < z.size(); i += 480) c.process(&z[i], &z[i], std::min<size_t>(480, z.size() - i));
+  CHECK(ya == yb);
+  CHECK(ya == z);
+}
+
+TEST(model_processing_never_allocates) {
+  auto x = talk_with_burst(48000, 6, 3.0);
+  Config c = cfg();
+  c.sample_rate = 48000;
+  Engine e(c, std::make_unique<ModelDetector>());
+  std::vector<float> y(x.size());
+  g_allocs = 0;
+  g_count_allocs = true;
+  for (size_t i = 0; i < x.size(); i += 128) e.process(&x[i], &y[i], std::min<size_t>(128, x.size() - i));
+  g_count_allocs = false;
+  CHECK(g_allocs == 0);
+}
+
+TEST(model_reset_matches_a_fresh_engine) {
+  auto x = talk_with_burst(SR, 3, 1.5, 4);
+  Engine a(cfg(), std::make_unique<ModelDetector>());
+  run(a, noise(SR * 2, 8), 160);
+  a.reset();
+  auto ya = run(a, x, 160);
+  Engine b(cfg(), std::make_unique<ModelDetector>());
+  auto yb = run(b, x, 160);
+  CHECK(ya == yb);
+}
+
+TEST(model_speed) {
+  Config c = cfg();
+  c.sample_rate = 48000;
+  Engine e(c, std::make_unique<ModelDetector>());
+  auto x = talk_with_burst(48000, 10, 5.0);
+  std::vector<float> y(480);
+  auto t0 = std::chrono::steady_clock::now();
+  for (int rep = 0; rep < 36; ++rep)  // 6 minutes of audio
+    for (size_t i = 0; i + 480 <= x.size(); i += 480) e.process(&x[i], y.data(), 480);
+  double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("    6 min of 48 kHz audio with the model in %.3f s  (%.0fx real time)\n", secs, 360 / secs);
+#if !defined(HUSH_SANITIZE) && defined(NDEBUG)
+  CHECK(secs < 18);  // under 5% of one core
+#endif
+}
+
+TEST(c_api_runs_the_model) {
+  hush_config c = hush_default_config();
+  c.sample_rate = 48000;
+  c.max_block = 480;
+  c.detector = HUSH_DETECTOR_MODEL;
+  hush_engine* h = hush_create(&c);
+  CHECK(h != nullptr);
+  std::vector<float> buf(480, 0.f);
+  for (int i = 0; i < 300; ++i) CHECK(hush_process(h, buf.data(), buf.data(), 480) == 0);
+  CHECK(hush_get_stats(h).mutes == 0);
+  hush_destroy(h);
 }
 
 int main() {

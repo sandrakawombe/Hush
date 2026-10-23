@@ -38,13 +38,14 @@ class EngineDetector(Detector):
     name = "engine"
     batch = True  # the scorer hands over every file at once
 
-    def __init__(self, block=160):
+    def __init__(self, block=160, detector="model"):
         self.block = int(block)
+        self.detector = detector
 
     def params(self):
-        return {"block": self.block, "detector": "rules (C++)"}
+        return {"block": self.block, "detector": f"{self.detector} (C++)"}
 
     def mutes_batch(self, paths, lookahead_ms):
-        res = run_tool("spans", paths, ["--lookahead-ms", str(lookahead_ms), "--block", str(self.block)])
+        res = run_tool("spans", paths, ["--detector", self.detector, "--lookahead-ms", str(lookahead_ms), "--block", str(self.block)])
         # The engine already applied its buffer: the span IS the decision.
         return {p: [Mute(a, b, a) for a, b in res[Path(p).resolve()]["spans"]] for p in paths}

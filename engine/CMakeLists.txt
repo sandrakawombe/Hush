@@ -11,7 +11,7 @@ endif()
 option(HUSH_TESTS "Build tests" ON)
 option(HUSH_SANITIZE "Build with address + undefined-behavior sanitizers" OFF)
 
-add_library(hush STATIC src/engine.cpp src/rules_detector.cpp src/c_api.cpp)
+add_library(hush STATIC src/engine.cpp src/rules_detector.cpp src/model_detector.cpp src/c_api.cpp)
 target_include_directories(hush PUBLIC include)
 if(MSVC)
   target_compile_options(hush PRIVATE /W4)

@@ -4,7 +4,7 @@ Automatic cough and sneeze muting for calls and meetings. Hush listens a
 fraction of a second ahead of what it sends, silences just the cough or
 sneeze, and unmutes on its own.
 
-> Status: early development. Pieces 1–3 are done and piece 5 (the trained model) is working in Python; next it moves into the C++ engine.
+> Status: early development. Pieces 1, 2, 3 and 5 are done: the trained model runs inside the C++ engine. Next: the Chrome extension.
 
 ## Plan
 
@@ -13,8 +13,8 @@ sneeze, and unmutes on its own.
 | 1 | **Test bench**: labeled test calls, SQLite catalog, scoring | ✅ done |
 | 2 | **Engine core** (C++): look-ahead buffer, detector slot, mute and fade, C API | ✅ done |
 | 3 | **Rules detector in the engine**, scored on the bench | ✅ done |
-| 4 | Chrome extension (Meet, Teams web, Zoom web) | |
-| 5 | **Trained on-device model**: trained and scored in Python ✅, C++ port next | in progress |
+| 4 | Chrome extension (Meet, Teams web, Zoom web) | next |
+| 5 | **Trained on-device model** in the engine's detector slot | ✅ done |
 | 6 | Desktop virtual microphone, then Android demo | |
 
 ## The engine
@@ -44,12 +44,13 @@ Guarantees, each backed by a test:
 * **Turning Hush off** keeps the same delay, so the audio never jumps.
 * **Late decisions are counted**, not hidden: `leaked_samples` and `late_decisions` say exactly what got through.
 * **Same decisions at any sample rate** (tested at 16 and 48 kHz): the detector always listens in 32 ms windows.
-* With the rules detector, about **250× faster than real time** at 48 kHz on one core.
+* With the trained model, about **160× faster than real time** at 48 kHz on one core (under 1% CPU). The weights are compiled in; no model file to ship.
 
 Run audio files through it:
 
 ```bash
-./build/hush_run spans --lookahead-ms 100 call.wav        # what the engine muted, as JSON
+./build/hush_run spans --lookahead-ms 100 call.wav        # what the engine muted, as JSON (model by default)
+./build/hush_run spans --detector rules call.wav          # same with the old rules detector
 ./build/hush_run spans --out processed/ call.wav          # also write the processed audio
 ./build/hush_run proposals call.wav                       # what the detector proposed, and when
 ```
@@ -70,8 +71,9 @@ pip install -r requirements.txt
 ./scripts/fetch_data.sh             # public clips, ~140 MB
 python -m hush_bench.build          # 80 dev + 40 test calls -> data/scenes, data/catalog.db
 python -m hush_bench.score --detector rules --split dev --lookahead-ms 100    # Python reference
-python -m hush_bench.score --detector engine --split dev --lookahead-ms 100   # the real C++ engine
-python -m hush_bench.parity --split dev                                       # C++ decides exactly like Python
+python -m hush_bench.score --detector model --split dev --lookahead-ms 100    # Python model
+python -m hush_bench.score --detector engine --split dev --lookahead-ms 100   # the real C++ engine (model)
+python -m hush_bench.parity --detector model --split dev                      # C++ decides exactly like Python
 python -m pytest -q tests
 ```
 
@@ -96,24 +98,27 @@ See [bench/DATA.md](bench/DATA.md) for data sources and licenses.
 The **test** set is locked: speakers and recordings that neither detector was
 tuned or trained on. It was scored once.
 
-| Metric | Rules (C++ engine) | Model v2 (Python) |
+| Metric | Rules (C++ engine) | Model v2 (C++ engine) |
 |---|---|---|
 | Coughs/sneezes caught | 22.6% | **47.2%** |
 | ⤷ coughs | 15.2% | **71.7%** |
 | ⤷ sneezes | 28.3% | 28.3% |
 | Leak when caught (median) | 0 ms | 0 ms |
-| False mutes per hour | 78 | **21** |
+| False mutes per hour | 78 | **24** |
 | Look-alikes muted | 7.0% | 5.3% |
-| Speech cut per hour | 30.7 s | **7.2 s** |
+| Speech cut per hour | 30.7 s | **7.0 s** |
 
 The model is a 17,000-weight causal network over log-mel features
 (`train/train.py`), trained on 4,000 generated calls built from Coswara,
 ESC-50 and FSDD (`train/gen_data.py`), with its decision thresholds tuned on
-separate validation calls (`train/tune.py`). Sneezes are its weak spot: the
+separate validation calls (`train/tune.py`). The C++ engine makes the same
+decisions as the Python model on every bench call (380 of 380 mutes), at
+16 kHz and 48 kHz alike. Sneezes are its weak spot: the
 only sneeze recordings available are 32 ESC-50 clips.
 
 ```bash
 bench/scripts/fetch_coswara.sh                 # extra training data (CC BY 4.0)
 python train/gen_data.py && python train/train.py && python train/tune.py
+python train/export_cpp.py models/hush_tcn_v2.npz   # compile the weights into the engine
 cd bench && python -m hush_bench.score --detector model --split dev
 ```

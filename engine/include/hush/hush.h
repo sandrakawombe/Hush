@@ -1,7 +1,7 @@
 /* Hush C API. Plain C so every platform can call it: WebAssembly (Chrome
  * extension), JNI (Android), Swift (iOS/macOS), C# (Windows).
  *
- *   hush_config cfg = hush_default_config();
+ *   hush_config cfg = hush_default_config();   // trained model, 100 ms look-ahead
  *   cfg.sample_rate = 48000;
  *   hush_engine* h = hush_create(&cfg);
  *   // audio callback:
@@ -26,7 +26,8 @@ typedef struct hush_engine hush_engine;
 
 typedef enum {
   HUSH_DETECTOR_NONE = 0, /* pass-through, never mutes (useful for A/B tests) */
-  HUSH_DETECTOR_RULES = 1 /* rules-based cough/sneeze detector */
+  HUSH_DETECTOR_RULES = 1, /* rules-based cough/sneeze detector */
+  HUSH_DETECTOR_MODEL = 2  /* trained model (recommended) */
 } hush_detector_kind;
 
 typedef struct {
