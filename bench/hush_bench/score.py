@@ -112,10 +112,15 @@ def run(detector_name, split, lookahead_ms, overrides, save=True, con=None):
     det = detectors.get(detector_name, **overrides)
     rows, flags_all, mutes_db, per_event_db = [], [], [], []
     speech_cut, total_s = 0.0, 0.0
-    for clip in catalog.clips(con, split):
-        pcm = audio.read(catalog.DB_PATH.parent / clip["path"])
+    clip_rows = catalog.clips(con, split)
+    batch = None
+    if getattr(det, "batch", False):
+        batch = det.mutes_batch([catalog.DB_PATH.parent / c["path"] for c in clip_rows], lookahead_ms)
+    for clip in clip_rows:
+        path = catalog.DB_PATH.parent / clip["path"]
         events, speech = catalog.clip_labels(con, clip["id"])
-        spans = apply_budget(det.mutes(pcm, SR), lookahead_ms / 1000, clip["duration_s"])
+        proposals = batch[path] if batch is not None else det.mutes(audio.read(path), SR)
+        spans = apply_budget(proposals, lookahead_ms / 1000, clip["duration_s"])
         per_event, flags, cut = score_clip(events, speech, spans)
         rows += per_event
         flags_all += flags

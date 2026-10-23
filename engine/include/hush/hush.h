@@ -26,7 +26,7 @@ typedef struct hush_engine hush_engine;
 
 typedef enum {
   HUSH_DETECTOR_NONE = 0, /* pass-through, never mutes (useful for A/B tests) */
-  HUSH_DETECTOR_RULES = 1 /* rules detector (added in piece 3) */
+  HUSH_DETECTOR_RULES = 1 /* rules-based cough/sneeze detector */
 } hush_detector_kind;
 
 typedef struct {
@@ -35,7 +35,7 @@ typedef struct {
   double lookahead_ms;  /* added delay, 0..500 */
   double fade_ms;       /* 0..100 */
   double max_mute_ms;   /* safety limit, 100..10000 */
-  hush_detector_kind detector;
+  int32_t detector;     /* a hush_detector_kind value; plain int so any caller value is safe to check */
 } hush_config;
 
 typedef struct {

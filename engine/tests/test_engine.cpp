@@ -12,6 +12,7 @@
 
 #include "hush/engine.hpp"
 #include "hush/hush.h"
+#include "hush/rules_detector.hpp"
 
 // ---- allocation counter: proves process() never touches the heap ----------
 static std::atomic<bool> g_count_allocs{false};
@@ -60,10 +61,15 @@ struct Scripted final : Detector {
   const char* name() const override { return "scripted"; }
   void prepare(double, size_t) override {}
   void reset() override {}
+  size_t nb = 0, ne = 0;  // next event to begin / end (events are in time order)
   void process(const float*, size_t n, uint64_t first, MuteSink& sink) override {
-    for (const Ev& e : evs) {
-      if (e.decide >= first && e.decide < first + n) sink.begin_mute(e.start);
-      if (e.end != UINT64_MAX && e.end >= first && e.end < first + n) sink.end_mute(e.end);
+    while (nb < evs.size() && evs[nb].decide < first + n) {
+      if (evs[nb].decide >= first) sink.begin_mute(evs[nb].start);
+      ++nb;
+    }
+    while (ne < evs.size() && (evs[ne].end == UINT64_MAX || evs[ne].end < first + n)) {
+      if (evs[ne].end != UINT64_MAX && evs[ne].end >= first) sink.end_mute(evs[ne].end);
+      ++ne;
     }
   }
 };
@@ -274,8 +280,8 @@ TEST(c_api_validates_and_runs) {
   bad.max_mute_ms = NAN;
   CHECK(hush_create(&bad) == nullptr);
   bad = c;
-  bad.detector = HUSH_DETECTOR_RULES;
-  CHECK(hush_create(&bad) == nullptr);  // not until piece 3
+  bad.detector = 99;
+  CHECK(hush_create(&bad) == nullptr);
   CHECK(hush_create(nullptr) == nullptr);
 
   c.sample_rate = 48000;
@@ -309,6 +315,99 @@ TEST(speed) {
   std::printf("    1 h of 48 kHz audio in %.3f s  (%.0fx faster than real time)\n", secs, 3600 / secs);
 #if !defined(HUSH_SANITIZE) && defined(NDEBUG)
   CHECK(secs < 36);  // generous: under 1% of one core (release builds only)
+#endif
+}
+
+// ---- rules detector -------------------------------------------------------
+
+// ~"talking": a harmonic voice with syllable rhythm, plus a cough-like burst
+// (sharp attack, noisy, decaying) at `burst_s`.
+static std::vector<float> talk_with_burst(double sr, double secs, double burst_s, unsigned seed = 5) {
+  std::vector<float> x(static_cast<size_t>(sr * secs));
+  std::mt19937 rng(seed);
+  std::normal_distribution<float> nz(0.f, 1.f);
+  double ph = 0, lp = 0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    const double t = i / sr;
+    const double syll = 0.55 + 0.45 * std::pow(std::sin(2 * M_PI * 4.2 * t), 2);
+    ph += 2 * M_PI * 140 / sr;
+    double v = 0;
+    for (int h = 1; h <= 8; ++h) v += std::sin(ph * h) / h;
+    x[i] = static_cast<float>(0.05 * syll * v + 0.001 * nz(rng));
+    if (burst_s >= 0 && t >= burst_s && t < burst_s + 0.3) {
+      const double u = t - burst_s;
+      lp = 0.6 * lp + 0.4 * nz(rng);
+      x[i] += static_cast<float>(0.6 * std::min(1.0, u / 0.004) * std::exp(-u / 0.07) * lp);
+    }
+  }
+  return x;
+}
+
+TEST(rules_mutes_a_cough_and_leaks_nothing) {
+  auto x = talk_with_burst(SR, 4, 2.0);
+  Engine e(cfg(100), std::make_unique<RulesDetector>());
+  std::vector<float> y(x.size()), g(x.size());
+  for (size_t i = 0; i < x.size(); i += 160) e.process(&x[i], &y[i], std::min<size_t>(160, x.size() - i), &g[i]);
+  const size_t D = e.latency_samples();
+  auto st = e.stats();
+  CHECK(st.mutes == 1);
+  CHECK(st.late_decisions == 0 && st.leaked_samples == 0);
+  bool silent = true;  // the first 200 ms of the burst never reach the call
+  for (uint64_t s = ms(2000); s < ms(2200); ++s) silent &= (g[s + D] == 0.f);
+  CHECK(silent);
+  CHECK(g[ms(1500) + D] == 1.f && g[ms(3500) + D] == 1.f);  // talking before and after untouched
+}
+
+TEST(rules_leaves_plain_talking_alone) {
+  auto x = talk_with_burst(SR, 6, -1);
+  Engine e(cfg(100), std::make_unique<RulesDetector>());
+  run(e, x, 160);
+  CHECK(e.stats().mutes == 0);
+}
+
+TEST(rules_works_at_48k) {
+  auto x = talk_with_burst(48000, 4, 2.0);
+  Config c = cfg(100);
+  c.sample_rate = 48000;
+  Engine e(c, std::make_unique<RulesDetector>());
+  run(e, x, 480);
+  CHECK(e.stats().mutes == 1 && e.stats().leaked_samples == 0);
+}
+
+TEST(rules_same_result_for_any_block_size) {
+  auto x = talk_with_burst(SR, 4, 2.0, 11);
+  Engine a(cfg(), std::make_unique<RulesDetector>());
+  auto ya = run(a, x, 1);
+  Engine b(cfg(), std::make_unique<RulesDetector>());
+  auto yb = run(b, x, 1013);
+  CHECK(ya == yb);
+}
+
+TEST(rules_processing_never_allocates) {
+  auto x = talk_with_burst(SR, 6, 3.0);
+  Engine e(cfg(), std::make_unique<RulesDetector>());
+  std::vector<float> y(x.size());
+  g_allocs = 0;
+  g_count_allocs = true;
+  for (size_t i = 0; i < x.size(); i += 128) e.process(&x[i], &y[i], std::min<size_t>(128, x.size() - i));
+  g_count_allocs = false;
+  CHECK(g_allocs == 0);
+  CHECK(e.stats().mutes == 1);
+}
+
+TEST(rules_speed) {
+  Config c = cfg();
+  c.sample_rate = 48000;
+  Engine e(c, std::make_unique<RulesDetector>());
+  auto x = talk_with_burst(48000, 10, 5.0);
+  std::vector<float> y(480);
+  auto t0 = std::chrono::steady_clock::now();
+  for (int rep = 0; rep < 36; ++rep)  // 6 minutes of audio
+    for (size_t i = 0; i + 480 <= x.size(); i += 480) e.process(&x[i], y.data(), 480);
+  double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("    6 min of 48 kHz audio with the rules detector in %.3f s  (%.0fx real time)\n", secs, 360 / secs);
+#if !defined(HUSH_SANITIZE) && defined(NDEBUG)
+  CHECK(secs < 18);  // under 5% of one core
 #endif
 }
 

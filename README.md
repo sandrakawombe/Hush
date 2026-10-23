@@ -4,7 +4,7 @@ Automatic cough and sneeze muting for calls and meetings. Hush listens a
 fraction of a second ahead of what it sends, silences just the cough or
 sneeze, and unmutes on its own.
 
-> Status: early development. Pieces 1–2 of 6 (test bench, engine core) are done.
+> Status: early development. Pieces 1–3 of 6 are done: test bench, engine core, and the first detector running inside the engine.
 
 ## Plan
 
@@ -12,7 +12,7 @@ sneeze, and unmutes on its own.
 |---|---|---|
 | 1 | **Test bench**: labeled test calls, SQLite catalog, scoring | ✅ done |
 | 2 | **Engine core** (C++): look-ahead buffer, detector slot, mute and fade, C API | ✅ done |
-| 3 | Rules detector in the engine, scored on the bench | next |
+| 3 | **Rules detector in the engine**, scored on the bench | ✅ done |
 | 4 | Chrome extension (Meet, Teams web, Zoom web) | |
 | 5 | Trained on-device model in the detector slot | |
 | 6 | Desktop virtual microphone, then Android demo | |
@@ -43,7 +43,16 @@ Guarantees, each backed by a test:
 * **Same output for any block size**, and in-place processing is safe.
 * **Turning Hush off** keeps the same delay, so the audio never jumps.
 * **Late decisions are counted**, not hidden: `leaked_samples` and `late_decisions` say exactly what got through.
-* About **1,700× faster than real time** at 48 kHz without a detector.
+* **Same decisions at any sample rate** (tested at 16 and 48 kHz): the detector always listens in 32 ms windows.
+* With the rules detector, about **250× faster than real time** at 48 kHz on one core.
+
+Run audio files through it:
+
+```bash
+./build/hush_run spans --lookahead-ms 100 call.wav        # what the engine muted, as JSON
+./build/hush_run spans --out processed/ call.wav          # also write the processed audio
+./build/hush_run proposals call.wav                       # what the detector proposed, and when
+```
 
 Call it from any platform through the plain C API in
 [`engine/include/hush/hush.h`](engine/include/hush/hush.h). New detectors
@@ -60,7 +69,9 @@ cd bench
 pip install -r requirements.txt
 ./scripts/fetch_data.sh             # public clips, ~140 MB
 python -m hush_bench.build          # 80 dev + 40 test calls -> data/scenes, data/catalog.db
-python -m hush_bench.score --detector rules --split dev --lookahead-ms 100
+python -m hush_bench.score --detector rules --split dev --lookahead-ms 100    # Python reference
+python -m hush_bench.score --detector engine --split dev --lookahead-ms 100   # the real C++ engine
+python -m hush_bench.parity --split dev                                       # C++ decides exactly like Python
 python -m pytest -q tests
 ```
 
@@ -79,3 +90,17 @@ scorer enforces the engine's look-ahead budget, so no detector can peek
 further ahead than the real buffer would allow.
 
 See [bench/DATA.md](bench/DATA.md) for data sources and licenses.
+
+## Current scores (dev set, real C++ engine, 100 ms look-ahead)
+
+| Metric | Rules detector |
+|---|---|
+| Coughs/sneezes caught | 12.8% |
+| Leak when caught (median) | 0 ms |
+| False mutes per hour | 70.5 |
+| Look-alikes muted | 3.3% |
+| Speech cut per hour | 24 s |
+
+The engine does its job: when the detector decides in time, nothing leaks.
+The rules detector is the weak part. It misses most real coughs and fires on
+word onsets. The trained model (piece 5) replaces it in the detector slot.

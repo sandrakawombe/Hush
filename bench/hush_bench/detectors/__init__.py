@@ -31,6 +31,9 @@ def get(name, **overrides):
     if name == "rules":
         from .rules import RulesDetector
         return RulesDetector(**overrides)
+    if name == "engine":
+        from .engine import EngineDetector
+        return EngineDetector(**overrides)
     if name == "never":
         return Never()
     raise ValueError(f"unknown detector: {name}")

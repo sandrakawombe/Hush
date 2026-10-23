@@ -4,6 +4,7 @@
 
 #include "hush/engine.hpp"
 #include "hush/hush.h"
+#include "hush/rules_detector.hpp"
 
 struct hush_engine {
   std::unique_ptr<hush::Engine> e;
@@ -31,11 +32,18 @@ hush_engine* hush_create(const hush_config* c) {
       !in_range(c->lookahead_ms, 0, 500) || !in_range(c->fade_ms, 0, 100) || !in_range(c->max_mute_ms, 100, 10000))
     return nullptr;
   std::unique_ptr<hush::Detector> det;
+  try {
   switch (c->detector) {
     case HUSH_DETECTOR_NONE:
       break;
+    case HUSH_DETECTOR_RULES:
+      det = std::make_unique<hush::RulesDetector>();
+      break;
     default:
-      return nullptr;  // HUSH_DETECTOR_RULES arrives in piece 3
+      return nullptr;
+  }
+  } catch (...) {
+    return nullptr;
   }
   hush::Config cfg;
   cfg.sample_rate = c->sample_rate;

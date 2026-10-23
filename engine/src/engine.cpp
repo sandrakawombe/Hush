@@ -13,9 +13,10 @@ constexpr float kLeakGain = 0.01f;  // -40 dB: above this, a muted sample still 
 }  // namespace
 
 // Fixed-size list of upcoming and current mutes, on the input timeline.
-// Doubles as the MuteSink the detector writes into. No allocation after
-// construction; if a detector floods it, extra decisions are dropped and
-// counted rather than growing memory on the audio thread.
+// Doubles as the MuteSink the detector writes into. Decisions are queued and
+// only take effect at the next step boundary, so the result never depends on
+// how the host chops audio into blocks. No allocation after construction; if
+// a detector floods it, extra decisions are dropped and counted.
 class Engine::Schedule final : public MuteSink {
  public:
   struct Interval {
@@ -23,36 +24,19 @@ class Engine::Schedule final : public MuteSink {
   };
   static constexpr size_t kCap = 32;
 
-  uint64_t floor = 0;  // oldest sample not yet sent; earlier starts are too late
   uint64_t mutes = 0, late = 0, dropped = 0;
 
-  void begin_mute(uint64_t start) override {
-    if (start < floor) {
-      start = floor;
-      ++late;
-    }
-    if (count_ > 0) {
-      Interval& last = at(count_ - 1);
-      if (last.end == kOpen) return;           // already muting
-      if (start <= last.end) {                 // touches the previous mute: extend it
-        last.end = kOpen;
-        return;
-      }
-      if (start < last.start) start = last.start;  // keep the list ordered
-    }
-    if (count_ == kCap) {
-      ++dropped;
-      return;
-    }
-    at(count_++) = {start, kOpen};
-    ++mutes;
-  }
+  void begin_mute(uint64_t start) override { queue(true, start); }
+  void end_mute(uint64_t end) override { queue(false, end); }
 
-  void end_mute(uint64_t end) override {
-    if (count_ == 0) return;
-    Interval& last = at(count_ - 1);
-    if (last.end != kOpen) return;
-    last.end = std::max(end, last.start + 1);
+  // Apply queued decisions. `floor` = oldest sample not yet sent; a mute
+  // that should have started earlier is too late for its first part.
+  void apply(uint64_t floor) {
+    for (size_t k = 0; k < npending_; ++k) {
+      if (pending_[k].begin) do_begin(pending_[k].at, floor);
+      else do_end(pending_[k].at);
+    }
+    npending_ = 0;
   }
 
   // First mute that hasn't finished by sample `s` (fade tail included), or null.
@@ -66,12 +50,55 @@ class Engine::Schedule final : public MuteSink {
     return nullptr;
   }
 
-  void clear() { head_ = count_ = 0; }
+  void clear() { head_ = count_ = npending_ = 0; }
 
  private:
+  struct Op {
+    bool begin;
+    uint64_t at;
+  };
+
+  void queue(bool begin, uint64_t at) {
+    if (npending_ == pending_.size()) {
+      ++dropped;
+      return;
+    }
+    pending_[npending_++] = {begin, at};
+  }
+
+  void do_begin(uint64_t start, uint64_t floor) {
+    if (start < floor) {
+      start = floor;
+      ++late;
+    }
+    if (count_ > 0) {
+      Interval& last = at(count_ - 1);
+      if (last.end == kOpen) return;               // already muting
+      if (start <= last.end) {                     // touches the previous mute: extend it
+        last.end = kOpen;
+        return;
+      }
+      if (start < last.start) start = last.start;  // keep the list ordered
+    }
+    if (count_ == kCap) {
+      ++dropped;
+      return;
+    }
+    at(count_++) = {start, kOpen};
+    ++mutes;
+  }
+
+  void do_end(uint64_t end) {
+    if (count_ == 0) return;
+    Interval& last = at(count_ - 1);
+    if (last.end != kOpen) return;
+    last.end = std::max(end, last.start + 1);
+  }
+
   Interval& at(size_t i) { return buf_[(head_ + i) % kCap]; }
   std::array<Interval, kCap> buf_{};
-  size_t head_ = 0, count_ = 0;
+  std::array<Op, 64> pending_{};
+  size_t head_ = 0, count_ = 0, npending_ = 0;
 };
 
 namespace {
@@ -140,16 +167,30 @@ float Engine::gain_for(uint64_t s) {
   return gain_;
 }
 
-void Engine::process(const float* in, float* out, size_t n) {
-  // 1. The detector hears the newest audio first.
-  schedule_->floor = next_in_ >= delay_ ? next_in_ - delay_ : 0;
+void Engine::process(const float* in, float* out, size_t n, float* gain_out) {
+  // Work in small steps lined up to the absolute sample count, so the result
+  // never depends on how the host chops the audio into blocks.
+  size_t done = 0;
+  while (done < n) {
+    const size_t k = std::min(n - done, kStep - static_cast<size_t>(next_in_ % kStep));
+    process_step(in + done, out + done, k, gain_out ? gain_out + done : nullptr);
+    done += k;
+  }
+  stats_.samples.fetch_add(n, std::memory_order_relaxed);
+  muted_now_.store(gain_ < 0.5f, std::memory_order_relaxed);
+}
+
+void Engine::process_step(const float* in, float* out, size_t n, float* gain_out) {
   const uint64_t mutes0 = schedule_->mutes, late0 = schedule_->late, drop0 = schedule_->dropped;
+  // 1. At each step boundary, decisions from the previous step take effect.
+  if (next_in_ % kStep == 0) schedule_->apply(next_in_ >= delay_ ? next_in_ - delay_ : 0);
+  // 2. The detector hears the newest audio.
   detector_->process(in, n, next_in_, *schedule_);
   stats_.mutes.fetch_add(schedule_->mutes - mutes0, std::memory_order_relaxed);
   stats_.late.fetch_add(schedule_->late - late0, std::memory_order_relaxed);
   stats_.dropped.fetch_add(schedule_->dropped - drop0, std::memory_order_relaxed);
 
-  // 2. Delay the audio by the look-ahead and apply the gate.
+  // 3. Delay the audio by the look-ahead and apply the gate.
   for (size_t i = 0; i < n; ++i) {
     const float x = in[i];  // read before writing: in and out may alias
     float y;
@@ -161,12 +202,11 @@ void Engine::process(const float* in, float* out, size_t n) {
       write_ = (write_ + 1 == delay_) ? 0 : write_ + 1;
     }
     const uint64_t abs_in = next_in_ + i;
-    if (abs_in >= delay_) y *= gain_for(abs_in - delay_);
-    out[i] = y;
+    const float g = abs_in >= delay_ ? gain_for(abs_in - delay_) : 1.f;
+    out[i] = y * g;
+    if (gain_out) gain_out[i] = g;
   }
   next_in_ += n;
-  stats_.samples.fetch_add(n, std::memory_order_relaxed);
-  muted_now_.store(gain_ < 0.5f, std::memory_order_relaxed);
 }
 
 Stats Engine::stats() const {

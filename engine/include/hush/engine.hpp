@@ -44,7 +44,10 @@ class Engine {
 
   // Audio thread. `in` and `out` may be the same buffer. n <= max_block.
   // Never allocates, locks or blocks.
-  void process(const float* in, float* out, size_t n);
+  void process(const float* in, float* out, size_t n) { process(in, out, n, nullptr); }
+  // Same, and also writes the gain applied to each output sample (1 = open,
+  // 0 = muted) into gain_out, for tools and tests. gain_out may be null.
+  void process(const float* in, float* out, size_t n, float* gain_out);
 
   // Any thread. When disabled, audio passes through delayed but never muted
   // (so turning Hush on and off never makes the audio jump).
@@ -62,6 +65,8 @@ class Engine {
 
  private:
   class Schedule;
+  static constexpr size_t kStep = 32;  // detector/gate step, aligned to the sample count
+  void process_step(const float* in, float* out, size_t n, float* gain_out);
   float gain_for(uint64_t s);
 
   Config cfg_;
