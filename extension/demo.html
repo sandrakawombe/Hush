@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Try Hush</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>Try Hush with your mic</h1>
+    <p class="sub">Record 15 seconds of yourself talking, and cough or sneeze a couple of times. Then compare what your mic heard with what people on a call would hear.</p>
+  </header>
+
+  <section class="card">
+    <div class="row">
+      <div>
+        <h2 id="phase">Ready</h2>
+        <p class="sub" id="hint">Use headphones or keep speakers low.</p>
+      </div>
+      <div class="big" id="clock">15</div>
+    </div>
+    <div class="meter"><canvas id="meter" width="1200" height="112" aria-label="Recording level, red where Hush muted"></canvas></div>
+    <div class="row">
+      <button id="start" type="button">Start recording</button>
+      <span class="sub" id="live"></span>
+    </div>
+    <p class="err hidden" id="error"></p>
+  </section>
+
+  <section class="card hidden" id="results">
+    <div class="stats">
+      <div><span>Mutes</span><strong id="sMutes">0</strong></div>
+      <div><span>Time muted</span><strong id="sMuted">0.0 s</strong></div>
+      <div><span>Added delay</span><strong id="sDelay">–</strong></div>
+      <div><span>Leaked</span><strong id="sLeak">0 ms</strong></div>
+    </div>
+    <div>
+      <h2>What your mic heard</h2>
+      <audio id="raw" controls></audio>
+    </div>
+    <div>
+      <h2>What the call hears</h2>
+      <audio id="hushed" controls></audio>
+    </div>
+    <p class="sub small">Everything runs in this tab. Nothing is uploaded.</p>
+  </section>
+</main>
+<script src="hush-core.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

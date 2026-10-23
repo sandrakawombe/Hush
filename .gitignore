@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 engine/build*/
 train/data/
+engine/wasm/.wasi/
+engine/wasm/hush.wasm

@@ -50,3 +50,32 @@ jobs:
           assert p.shape[0] > 0 and 0 <= p.min() and p.max() <= 1
           print("model OK:", len(p), "frames")
           PY
+
+  extension:
+    name: Chrome extension (WebAssembly engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install clang and the WebAssembly linker
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build hush.wasm from the C++ engine
+        run: ./extension/build.sh
+      - name: Build the native engine (reference for parity)
+        run: cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release && cmake --build engine/build
+      - name: Mic wrapper never breaks the call (fake browser)
+        run: node extension/test/inject.test.mjs
+      - name: Browser engine matches native engine
+        run: |
+          pip install numpy scipy
+          mkdir -p /tmp/wavs && python extension/test/make_wavs.py /tmp/wavs
+          node extension/test/parity.mjs /tmp/wavs/*.wav
+      - name: Manifest is valid JSON and scripts parse
+        run: |
+          python -c "import json; json.load(open('extension/manifest.json'))"
+          for f in extension/*.js; do node --check "$f"; done

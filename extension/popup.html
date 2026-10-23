@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hush</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <header class="row">
+    <div>
+      <h1>Hush</h1>
+      <p class="sub">Auto-mutes coughs and sneezes</p>
+    </div>
+    <label class="switch" title="Turn Hush on or off">
+      <input id="enabled" type="checkbox" checked>
+      <span class="track"></span>
+    </label>
+  </header>
+
+  <section class="status" id="status">
+    <span class="dot" id="dot"></span>
+    <div>
+      <strong id="state">Checking this tab…</strong>
+      <p id="detail" class="sub"></p>
+    </div>
+  </section>
+
+  <p class="sub small" id="note">Works in Google Meet, Microsoft Teams and Zoom in Chrome. Turn it on before joining; changes apply to calls you join next.</p>
+  <a class="button" href="demo.html" target="_blank">Try it with your mic</a>
+  <script src="popup.js"></script>
+</body>
+</html>

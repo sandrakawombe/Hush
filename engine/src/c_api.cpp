@@ -11,6 +11,15 @@ struct hush_engine {
   std::unique_ptr<hush::Engine> e;
 };
 
+// WebAssembly builds have no C++ exceptions; allocation failure aborts there.
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#define HUSH_TRY try
+#define HUSH_CATCH_ALL catch (...)
+#else
+#define HUSH_TRY if (true)
+#define HUSH_CATCH_ALL else
+#endif
+
 namespace {
 bool in_range(double v, double lo, double hi) { return std::isfinite(v) && v >= lo && v <= hi; }
 }  // namespace
@@ -33,7 +42,7 @@ hush_engine* hush_create(const hush_config* c) {
       !in_range(c->lookahead_ms, 0, 500) || !in_range(c->fade_ms, 0, 100) || !in_range(c->max_mute_ms, 100, 10000))
     return nullptr;
   std::unique_ptr<hush::Detector> det;
-  try {
+  HUSH_TRY {
   switch (c->detector) {
     case HUSH_DETECTOR_NONE:
       break;
@@ -46,7 +55,7 @@ hush_engine* hush_create(const hush_config* c) {
     default:
       return nullptr;
   }
-  } catch (...) {
+  } HUSH_CATCH_ALL {
     return nullptr;
   }
   hush::Config cfg;
@@ -57,9 +66,9 @@ hush_engine* hush_create(const hush_config* c) {
   cfg.max_mute_ms = c->max_mute_ms;
   auto* h = new (std::nothrow) hush_engine;
   if (!h) return nullptr;
-  try {
+  HUSH_TRY {
     h->e = std::make_unique<hush::Engine>(cfg, std::move(det));
-  } catch (...) {
+  } HUSH_CATCH_ALL {
     delete h;
     return nullptr;
   }

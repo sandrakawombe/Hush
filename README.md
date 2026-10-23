@@ -6,7 +6,7 @@ Automatic cough and sneeze muting for calls and meetings. Hush listens a
 fraction of a second ahead of what it sends, silences just the cough or
 sneeze, and unmutes on its own.
 
-> Status: early development. Pieces 1, 2, 3 and 5 are done: the trained model runs inside the C++ engine. Next: the Chrome extension.
+> Status: early development. Pieces 1–5 are built. The Chrome extension is ready to load and try; it has been verified in simulation but not yet on real Meet, Teams or Zoom calls.
 
 ## Plan
 
@@ -15,7 +15,7 @@ sneeze, and unmutes on its own.
 | 1 | **Test bench**: labeled test calls, SQLite catalog, scoring | ✅ done |
 | 2 | **Engine core** (C++): look-ahead buffer, detector slot, mute and fade, C API | ✅ done |
 | 3 | **Rules detector in the engine**, scored on the bench | ✅ done |
-| 4 | Chrome extension (Meet, Teams web, Zoom web) | next |
+| 4 | **Chrome extension** (Meet, Teams web, Zoom web) — [install guide](extension/README.md) | ✅ built, needs real-call testing |
 | 5 | **Trained on-device model** in the engine's detector slot | ✅ done |
 | 6 | Desktop virtual microphone, then Android demo | |
 
