@@ -1,0 +1,7 @@
+bench/data/raw/
+bench/data/scenes/
+bench/data/catalog.db
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
